@@ -1,35 +1,57 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+// src/App.tsx
+import React, { useEffect, useRef, useCallback, useState } from 'react';
+import './index.css';
+import { ThreeScene } from './three/ThreeScene';
 
 function App() {
-  const [count, setCount] = useState(0)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [threeScene, setThreeScene] = useState<ThreeScene | null>(null);
+
+  const handleObjectInteract = useCallback((objectName: string) => {
+    if (objectName === 'ResumeCube') {
+      window.open('/assets/resume.pdf', '_blank');
+    } else if (objectName === 'GithubCube') {
+      window.open('https://github.com/your-username', '_blank');
+    }
+    //objects...
+  }, []);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+
+    const scene = new ThreeScene({
+      canvas: canvasRef.current,
+      onObjectInteract: handleObjectInteract,
+    });
+    scene.start();
+    setThreeScene(scene);
+
+    return () => {
+      scene.stop();
+    };
+  }, [handleObjectInteract]);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (threeScene) {
+        threeScene.onWindowResize();
+      }
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+    };
+  }, [threeScene]);
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    <div style={{ position: 'relative' }}>
+      <canvas ref={canvasRef} />
+      <div className="overlay">
+        <h2>My 3D Portfolio</h2>
+        <p>Use W/A/S/D to move. Click on cubes to interact!</p>
       </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    </div>
+  );
 }
 
-export default App
+export default App;
