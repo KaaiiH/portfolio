@@ -9,9 +9,9 @@ function App() {
 
   const handleObjectInteract = useCallback((objectName: string) => {
     if (objectName === 'ResumeCube') {
-      window.open('/assets/resume.pdf', '_blank');
+      window.open('public/assets/Hoenshell_resume.pdf', '_blank');
     } else if (objectName === 'GithubCube') {
-      window.open('https://github.com/your-username', '_blank');
+      window.open('https://github.com/KaaiiH', '_blank');
     }
     //objects...
   }, []);
@@ -47,8 +47,9 @@ function App() {
     <div style={{ position: 'relative' }}>
       <canvas ref={canvasRef} />
       <div className="overlay">
-        <h2>My 3D Portfolio</h2>
+        <h2>Kai Hoenshell Porfolio</h2>
         <p>Use W/A/S/D to move. Click on cubes to interact!</p>
+        <p>Use Q to sit/stand</p>
       </div>
     </div>
   );
