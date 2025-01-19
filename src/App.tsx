@@ -49,7 +49,9 @@ function App() {
       <div className="overlay">
         <h2>Kai Hoenshell Porfolio</h2>
         <p>Use W/A/S/D to move. Click on cubes to interact!</p>
-        <p>Use Q to sit/stand</p>
+        <p>Use Q to Sit/Stand</p>
+        <p>Use Space to Jump</p>
+        <p>Use E to Attack</p>
       </div>
     </div>
   );
