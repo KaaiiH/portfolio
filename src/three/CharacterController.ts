@@ -1,12 +1,13 @@
 import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
 
 /**
  * handles character movement and any future logic (e.g., jumping, animations).
  */
 export class CharacterController {
-  private character: THREE.Group | null = null;
+  private characterModel: THREE.Group | null = null;
+  private characterBody: CANNON.Body | null = null;
 
-  
   constructor() {}
 
   /**
@@ -14,55 +15,53 @@ export class CharacterController {
    * @param model A Three.js Group (e.g., from a GLTF file)
    */
   public setCharacter(model: THREE.Group) {
-    this.character = model;
+    this.characterModel = model;
   }
 
-  /**
-   * moves the character based on current key presses.
-   * @param keys The record of keyboard states (e.g., { KeyW: true, ... })
-   */
-  public update(keys: Record<string, boolean>) {
-    if (!this.character) return;
+  public setCharacterBody(body: CANNON.Body) {
+    this.characterBody = body;
+  }
 
-    const speed = 0.05;
-    const direction = new THREE.Vector2(0, 0);
+  public getCharacter(): THREE.Group | null {
+    return this.characterModel;
+  }
+
+  public update(keys: Record<string, boolean>) {
+    if (!this.characterBody) return;
+
+    const speed = 15; // SPEED VARIABLE
+    const velocity = new CANNON.Vec3(0, this.characterBody.velocity.y, 0);
 
     if (keys['KeyW']) {
-      direction.y -= 1
+      velocity.z = -speed;
+    } else if (keys['KeyS']) {
+      velocity.z = speed;
     }
-    if (keys['KeyS']) {
-      direction.y += 1
-    }
+
     if (keys['KeyA']) {
-      direction.x -= 1;
-    }
-    if (keys['KeyD']) {
-      direction.x += 1;
-    }
-
-    // Normalize so that diagonal speed isn't faster than straight.
-    if (direction.length() > 0) {
-      direction.normalize(); // now length is 1
+      velocity.x = -speed;
+    } else if (keys['KeyD']) {
+      velocity.x = speed;
     }
 
-    // Move character in that direction (scaled by speed).
-    this.character.position.x += direction.x * speed;
-    this.character.position.z += direction.y * speed;
-
-    if (direction.length() > 0) {
-      // Because the model rotation.y = 0 means it faces +Z
-      // we can use the formula:  angle = atan2(direction.x, direction.y) + PI/2.
-      const angle = Math.atan2(direction.x, direction.y) + Math.PI / 2;
-      this.character.rotation.y = angle;
-    }
-
+    this.characterBody.velocity.copy(velocity);
   }
 
-  /**
-   * returns the character’s current position for camera following or other logic.
-   */
+
+  public computeRotationForVisual(): number {
+    if (!this.characterBody) return 0;
+
+    const vx = this.characterBody.velocity.x;
+    const vz = this.characterBody.velocity.z;
+    if (Math.abs(vx) < 0.001 && Math.abs(vz) < 0.001) {
+      return 0;
+    }
+    return Math.atan2(vx, vz) + Math.PI / 2;
+  }
+
   public getPosition(): THREE.Vector3 | null {
-    if (!this.character) return null;
-    return this.character.position.clone();
+    if (!this.characterBody) return null;
+    const p = this.characterBody.position;
+    return new THREE.Vector3(p.x, p.y, p.z);
   }
 }

@@ -4,6 +4,8 @@ import * as THREE from 'three';
 import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader';
 import { CharacterController } from './CharacterController';
 import { LoopOnce, AnimationMixer, AnimationUtils } from 'three';
+import { PhysicsWorld } from './PhysicsWorld'; 
+import * as CANNON from 'cannon-es'; // for types if needed
 
 interface ThreeSceneOptions {
   canvas: HTMLCanvasElement;
@@ -25,21 +27,24 @@ export class ThreeScene {
   // Character logic
   private characterController: CharacterController;
 
-  // Animation system
+  // Mixer & actions
   private mixer: THREE.AnimationMixer | null = null;
   private actions: { [key: string]: THREE.AnimationAction | null } = {};
 
   private currentActionName: string | null = null;
+  private isSitting = false;
+  private isAnimating = false;
+  private isJumping = false;
+  private isAttacking = false;
 
-  // Sitting logic
-  private isSitting = false;   // Are we currently seated?
-  private isAnimating = false; // Are we in a sit/stand animation?
+  private jumpStartTime = 0;
+  private jumpTotalDuration = 0;
+  private baseY = 0;      // Model's initial Y
+  private maxJumpHeight = 1; // tweak for higher jump
 
-  // Jump logic
-  private isJumping = false;   // Is a jump animation playing?
+  private physicsWorld: PhysicsWorld | null = null;
 
-  // NEW: Attack logic
-  private isAttacking = false; // Is an attack animation playing?
+  private testBlockMesh: THREE.Mesh | null = null;
 
   constructor(private options: ThreeSceneOptions) {
     this.scene = new THREE.Scene();
@@ -64,6 +69,9 @@ export class ThreeScene {
   }
 
   private init() {
+    // Create Cannon physics world
+    this.physicsWorld = new PhysicsWorld();
+
     // Camera
     this.camera.position.set(0, 2, 5);
 
@@ -82,7 +90,18 @@ export class ThreeScene {
     floor.rotation.x = -Math.PI / 2;
     this.scene.add(floor);
 
-    // Sample blocks
+    // Test block 
+    const blockGeometry = new THREE.BoxGeometry(2, 2, 2);
+    const blockMaterial = new THREE.MeshStandardMaterial({ color: 0x8f8f8f });
+    const testBlock = new THREE.Mesh(blockGeometry, blockMaterial);
+    testBlock.position.set(0, 1, -5);
+    this.scene.add(testBlock);
+    this.testBlockMesh = testBlock;
+
+    // Static body for the block in Cannon
+    this.physicsWorld.createBlockBody(0, 1, -5);
+
+    // Sample cubes
     const resumeCube = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshStandardMaterial({ color: 0x00ff00 })
@@ -99,29 +118,24 @@ export class ThreeScene {
     githubCube.name = 'GithubCube';
     this.scene.add(githubCube);
 
-    //Events
+    // Listeners
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     this.renderer.domElement.addEventListener('click', this.onClick);
 
-    //Load character
+    // Load character
     this.loadCharacter();
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
     this.keys[e.code] = true;
 
-    //Sit toggle
     if (e.code === 'KeyQ') {
       this.handleSitToggle();
     }
-
-    //Jump
     if (e.code === 'Space') {
       this.handleJump();
     }
-
-    //Attack
     if (e.code === 'KeyE') {
       this.handleAttack();
     }
@@ -140,14 +154,21 @@ export class ThreeScene {
         if (!model) return;
 
         this.scene.add(model);
-        model.position.set(0, 0, 0);
+        model.position.set(0, 1, 0);
         model.scale.set(0.3, 0.3, 0.3);
 
         this.characterController.setCharacter(model);
 
+        // Create a dynamic Cannon body for the character
+        this.physicsWorld?.createCharacterBody(0, 1, 0);
+        if (this.physicsWorld?.characterBody) {
+          this.characterController.setCharacterBody(this.physicsWorld.characterBody);
+        }
+
+        // Create AnimationMixer
         this.mixer = new THREE.AnimationMixer(model);
 
-        // store original animations
+        // Gather animations
         gltf.animations.forEach((clip) => {
           const action = this.mixer!.clipAction(clip);
           this.actions[clip.name] = action;
@@ -159,19 +180,19 @@ export class ThreeScene {
           const partialJump = AnimationUtils.subclip(
             idleJumpClip,
             'PartialIdleJump',
-            120,
-            180
+            135, // start frame
+            180  // end frame
           );
           const jumpAction = this.mixer.clipAction(partialJump);
           this.actions['PartialIdleJump'] = jumpAction;
         }
 
-        // Start in Idle if we have it
+        // Start Idle if available
         if (this.actions['Idle']) {
           this.playAnimation('Idle');
         } else {
-          const first = Object.keys(this.actions)[0];
-          if (first) this.playAnimation(first);
+          const firstClip = Object.keys(this.actions)[0];
+          if (firstClip) this.playAnimation(firstClip);
         }
       },
       undefined,
@@ -179,13 +200,158 @@ export class ThreeScene {
     );
   }
 
- 
-   // Attack logic on E:
-   // - If sitting, jumping, attacking, or in sit animation => ignore
-   // - Otherwise single-play "Attack" animation, block movement
-   
+  public start() {
+    this.animate();
+  }
+
+  public stop() {
+    if (this.animationId) {
+      cancelAnimationFrame(this.animationId);
+    }
+  }
+
+  private animate() {
+    this.animationId = requestAnimationFrame(this.animate);
+
+    const dt = this.clock.getDelta(); 
+
+    if (!this.isSitting && !this.isAnimating && !this.isAttacking) {
+      this.characterController.update(this.keys);
+    }
+
+    if (this.physicsWorld) {
+      this.physicsWorld.update(dt);
+    }
+
+    //Sync Cannon
+    const characterModel = this.characterController.getCharacter();
+    const characterBody = this.physicsWorld?.characterBody;
+    if (characterModel && characterBody) {
+      characterModel.position.set(
+        characterBody.position.x,
+        characterBody.position.y,
+        characterBody.position.z
+      );
+
+      // Change orientation
+      const angle = this.characterController.computeRotationForVisual();
+      characterModel.rotation.y = angle;
+    }
+
+    // Jump arc
+    if (this.isJumping) {
+      const model = this.characterController.getCharacter();
+      if (model) {
+        const now = performance.now();
+        const elapsed = now - this.jumpStartTime;
+        const t = elapsed / this.jumpTotalDuration;
+        if (t < 1) {
+          const yOffset = this.maxJumpHeight * 4 * t * (1 - t);
+          model.position.y = this.baseY + yOffset;
+        } else {
+          this.isJumping = false;
+          model.position.y = this.baseY;
+        }
+      }
+    }
+
+    if (!this.isJumping && !this.isAttacking && !this.isSitting && !this.isAnimating) {
+      if (this.isMoving()) {
+        if (this.currentActionName !== 'Walk' && this.actions['Walk']) {
+          this.playAnimation('Walk Start');
+          this.playAnimation('Walk');
+        }
+      } else {
+        if (this.currentActionName !== 'Idle' && this.actions['Idle']) {
+          this.playAnimation('Walk stop');
+          this.playAnimation('Idle');
+        }
+      }
+    }
+
+    // animationMixer
+    if (this.mixer) {
+      this.mixer.update(dt);
+    }
+
+    // Camera follow still not working NEED WORK
+    const pos = this.characterController.getPosition();
+    if (pos) {
+      this.camera.position.x = pos.x;
+      this.camera.position.z = pos.z + 5;
+    }
+
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  private isMoving(): boolean {
+    return (
+      this.keys['KeyW'] ||
+      this.keys['KeyA'] ||
+      this.keys['KeyS'] ||
+      this.keys['KeyD']
+    );
+  }
+
+  // Jump logic
+  private handleJump() {
+    if (this.isSitting) {
+      console.log('Cannot jump while sitting!');
+      return;
+    }
+    if (this.isJumping) {
+      console.log('Already jumping!');
+      return;
+    }
+    if (this.isAttacking) {
+      console.log('Cannot jump while attacking!');
+      return;
+    }
+    if (this.isAnimating) {
+      console.log('Cannot jump while sit/stand anim is in progress!');
+      return;
+    }
+
+    const jumpAction = this.actions['PartialIdleJump'];
+    if (!jumpAction) {
+      console.warn('No "PartialIdleJump" found.');
+      return;
+    }
+
+    // jump sub-clip
+    this.isJumping = true;
+
+    if (this.currentActionName && this.actions[this.currentActionName]) {
+      const oldAction = this.actions[this.currentActionName];
+      oldAction?.fadeOut(0.3);
+    }
+
+    jumpAction.reset();
+    jumpAction.setLoop(LoopOnce, 1);
+    jumpAction.clampWhenFinished = true;
+    jumpAction.play();
+    this.currentActionName = 'PartialIdleJump';
+
+    const jumpDuration = jumpAction.getClip().duration - 0.5;
+    this.jumpTotalDuration = jumpDuration * 1000;
+    this.jumpStartTime = performance.now();
+
+    const model = this.characterController.getCharacter();
+    if (model) {
+      this.baseY = model.position.y;
+    }
+
+    setTimeout(() => {
+      this.isJumping = false;
+      if (this.actions['Idle']) {
+        this.playAnimation('Idle');
+      }
+      if (model) model.position.y = this.baseY;
+    }, this.jumpTotalDuration);
+  }
+
+  // Attack logic
   private handleAttack() {
-    // If we have a reason to block attack, do so:
     if (this.isSitting) {
       console.log('Cannot attack while sitting!');
       return;
@@ -209,7 +375,6 @@ export class ThreeScene {
       return;
     }
 
-    // mark we are attacking => no movement
     this.isAttacking = true;
 
     if (this.currentActionName && this.actions[this.currentActionName]) {
@@ -217,72 +382,25 @@ export class ThreeScene {
       oldAction?.fadeOut(0.3);
     }
 
-    // Single-play
     attackAction.reset();
     attackAction.setLoop(LoopOnce, 1);
     attackAction.clampWhenFinished = true;
     attackAction.play();
-
     this.currentActionName = 'Attack';
 
-    // Use setTimeout based on clip duration to revert to idle
     const attackDuration = attackAction.getClip().duration;
     setTimeout(() => {
       this.isAttacking = false;
-      // for simplicity, revert to Idle
       if (this.actions['Idle']) {
         this.playAnimation('Idle');
       }
     }, attackDuration * 1000);
   }
 
-  
-  private handleJump() {
-    if (this.isSitting) {
-      console.log('Cannot jump while sitting!');
-      return;
-    }
-    if (this.isJumping) return;
-    if (this.isAttacking) {
-      console.log('Cannot jump while attacking!');
-      return;
-    }
-
-    const jumpAction = this.actions['PartialIdleJump'];
-    if (!jumpAction) {
-      console.warn('No "PartialIdleJump" found.');
-      return;
-    }
-
-    this.isJumping = true;
-
-    // Fade out old
-    if (this.currentActionName && this.actions[this.currentActionName]) {
-      const oldAction = this.actions[this.currentActionName];
-      oldAction?.fadeOut(0.3);
-    }
-
-    jumpAction.reset();
-    jumpAction.setLoop(LoopOnce, 1);
-    jumpAction.clampWhenFinished = true;
-    jumpAction.play();
-
-    this.currentActionName = 'PartialIdleJump';
-
-    // After ~2s, revert to Idle
-    const jumpDuration = jumpAction.getClip().duration; // ~2
-    setTimeout(() => {
-      this.isJumping = false;
-      if (this.actions['Idle']) {
-        this.playAnimation('Idle');
-      }
-    }, jumpDuration * 1000);
-  }
-
+  // Sit logic
   private handleSitToggle() {
-    if (this.isAnimating) return;
-    if (this.isJumping || this.isAttacking) {
-      console.log('Cannot sit/stand while jumping or attacking!');
+    if (this.isAnimating || this.isJumping || this.isAttacking) {
+      console.log('Cannot sit/stand now!');
       return;
     }
 
@@ -317,7 +435,6 @@ export class ThreeScene {
     const newAction = this.actions[name];
     if (!newAction) return;
 
-    //if we had a current action playing, fade it out
     if (this.currentActionName && this.actions[this.currentActionName]) {
       const oldAction = this.actions[this.currentActionName];
       oldAction?.fadeOut(0.3);
@@ -336,14 +453,14 @@ export class ThreeScene {
     this.currentActionName = name;
   }
 
+  // Click Interactions
   private onClick = (e: MouseEvent) => {
-    // If animating or not sitting => can't interact
     if (this.isAnimating) {
       console.log('Cannot interact during sit/stand anim.');
       return;
     }
     if (!this.isSitting) {
-      console.log('You must be sitting to interact with these blocks.');
+      console.log('You must be sitting to interact.');
       return;
     }
 
@@ -358,77 +475,11 @@ export class ThreeScene {
     if (hits.length > 0) {
       const first = hits[0].object;
       console.log('Clicked on:', first.name);
-
       if (this.options.onObjectInteract) {
         this.options.onObjectInteract(first.name);
       }
     }
   };
-
-  public start() {
-    this.animate();
-  }
-
-  public stop() {
-    if (this.animationId) {
-      cancelAnimationFrame(this.animationId);
-    }
-  }
-
-  private animate() {
-    this.animationId = requestAnimationFrame(this.animate);
-
-    // Movement is blocked if:
-    // - We are in a sit/stand anim (isAnimating)
-    // - We are actually sitting
-    // - We are attacking
-    // (But not blocked by jumping if you want mid-air movement.)
-    const canMove = !this.isAnimating && !this.isSitting && !this.isAttacking;
-
-    if (canMove) {
-      this.characterController.update(this.keys);
-    }
-
-    // Only do Walk/Idle logic if not jumping, not animating, not sitting, not attacking
-    if (!this.isJumping && !this.isAnimating && !this.isSitting && !this.isAttacking) {
-      if (this.isMoving()) {
-        if (this.currentActionName !== 'Walk' && this.actions['Walk']) {
-          this.playAnimation('Walk Start');
-          this.playAnimation('Walk');
-        }
-      } else {
-        if (this.currentActionName !== 'Idle' && this.actions['Idle']) {
-          this.playAnimation('Walk stop');
-          this.playAnimation('Idle');
-        }
-      }
-    }
-
-    // Camera follow
-    const pos = this.characterController.getPosition();
-    if (pos) {
-      this.camera.position.x = pos.x;
-      this.camera.position.z = pos.z + 5;
-    }
-
-    // Update mixer
-    const delta = this.clock.getDelta();
-    if (this.mixer) {
-      this.mixer.update(delta);
-    }
-
-    // Render
-    this.renderer.render(this.scene, this.camera);
-  }
-
-  private isMoving(): boolean {
-    return (
-      this.keys['KeyW'] ||
-      this.keys['KeyA'] ||
-      this.keys['KeyS'] ||
-      this.keys['KeyD']
-    );
-  }
 
   public onWindowResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
