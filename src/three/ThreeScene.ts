@@ -350,7 +350,10 @@ export class ThreeScene {
       }
     }, attackDuration * 1000);
 
-    this.startCameraShake(0.2) //shake camera for 0.2 seconds
+    
+    setTimeout(() => {
+      this.startCameraShake(0.2);//shake camera for 0.2 seconds
+    }, 1200); //delay by 1.2 seconds
   }
 
   
@@ -423,7 +426,7 @@ export class ThreeScene {
       const desiredY = pos.y + 2; // keep camera 2 units above char
 
       // Lerp the camera’s position to avoid snapping
-      const lerpFactor = 5 * dt; // adjust for smoothness
+      const lerpFactor = 7 * dt; // adjust for smoothness
       this.camera.position.x += (desiredX - this.camera.position.x) * lerpFactor;
       this.camera.position.y += (desiredY - this.camera.position.y) * lerpFactor;
       this.camera.position.z += (desiredZ - this.camera.position.z) * lerpFactor;
