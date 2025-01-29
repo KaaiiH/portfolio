@@ -34,7 +34,6 @@ export class ThreeScene {
 
   private currentActionName: string | null = null;
 
-
   private isSitting = false;
   private isAnimating = false; 
   private isJumping = false;
@@ -44,6 +43,11 @@ export class ThreeScene {
   private physicsWorld: PhysicsWorld | null = null;
 
   private testBlockMesh: THREE.Mesh | null = null;
+
+  private cameraTarget = new THREE.Vector3(0, 2, 5); // for smoothing
+  private shakeStart = 0;
+  private shakeDuration = 0;
+  private isShaking = false;
 
   constructor(private options: ThreeSceneOptions) {
     this.scene = new THREE.Scene();
@@ -89,8 +93,8 @@ export class ThreeScene {
     floor.rotation.x = -Math.PI / 2;
     this.scene.add(floor);
 
-
-    const blockGeometry = new THREE.BoxGeometry(2, 2, 2);
+    //width, height, length
+    const blockGeometry = new THREE.BoxGeometry(2, 1, 2);
     const blockMaterial = new THREE.MeshStandardMaterial({ color: 0x8f8f8f });
     const testBlock = new THREE.Mesh(blockGeometry, blockMaterial);
     testBlock.position.set(0, 1, -5);
@@ -152,9 +156,8 @@ export class ThreeScene {
 
         this.scene.add(model);
         // Start slightly above floor
-        model.position.set(0, 1, 0);
+        model.position.set(0, 0, 0);
         model.scale.set(0.3, 0.3, 0.3);
-
 
         this.characterController.setCharacter(model);
 
@@ -254,11 +257,7 @@ export class ThreeScene {
     }
 
 
-    const pos = this.characterController.getPosition();
-    if (pos) {
-      this.camera.position.x = pos.x;
-      this.camera.position.z = pos.z + 5;
-    }
+    this.updateCamera(dt)
 
     this.renderer.render(this.scene, this.camera);
   }
@@ -350,8 +349,11 @@ export class ThreeScene {
         this.playAnimation('Idle');
       }
     }, attackDuration * 1000);
+
+    this.startCameraShake(0.2) //shake camera for 0.2 seconds
   }
 
+  
 
   private handleSitToggle() {
     if (this.isAnimating || this.isJumping || this.isAttacking) {
@@ -408,7 +410,49 @@ export class ThreeScene {
     this.currentActionName = name;
   }
 
+  // ----------------------------------------------------------
+  // Camera smoothing + shake
+  // ----------------------------------------------------------
+  private updateCamera(dt: number) {
+    // 1) Follow character smoothly
+    const pos = this.characterController.getPosition();
+    if (pos) {
+      // desired camera position is a bit behind the character
+      const desiredX = pos.x;
+      const desiredZ = pos.z + 5; 
+      const desiredY = pos.y + 2; // keep camera 2 units above char
 
+      // Lerp the camera’s position to avoid snapping
+      const lerpFactor = 5 * dt; // adjust for smoothness
+      this.camera.position.x += (desiredX - this.camera.position.x) * lerpFactor;
+      this.camera.position.y += (desiredY - this.camera.position.y) * lerpFactor;
+      this.camera.position.z += (desiredZ - this.camera.position.z) * lerpFactor;
+    }
+
+    // 2) If shaking, add small random offset
+    if (this.isShaking) {
+      const elapsed = performance.now() - this.shakeStart;
+      if (elapsed < this.shakeDuration) {
+        // small random offset
+        const shakeAmount = 0.05; // amplitude
+        this.camera.position.x += (Math.random() - 0.5) * shakeAmount;
+        this.camera.position.y += (Math.random() - 0.5) * shakeAmount;
+      } else {
+        // stop shaking
+        this.isShaking = false;
+      }
+    }
+  }
+
+  private startCameraShake(durationSec: number) {
+    this.isShaking = true;
+    this.shakeStart = performance.now();
+    this.shakeDuration = durationSec * 1000;
+  }
+
+  // ----------------------------------------------------------
+  // Click interactions
+  // ----------------------------------------------------------
   private onClick = (e: MouseEvent) => {
     if (this.isAnimating) {
       console.log('Cannot interact during sit/stand anim.');
@@ -435,6 +479,7 @@ export class ThreeScene {
       }
     }
   };
+
 
   public onWindowResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;

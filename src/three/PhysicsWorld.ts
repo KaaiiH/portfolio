@@ -47,7 +47,7 @@ export class PhysicsWorld {
       linearDamping: 0.9,
       angularDamping: 1.0,
     });
-
+    
     this.world.addBody(body);
     this.characterBody = body;
   }
