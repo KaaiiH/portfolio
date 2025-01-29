@@ -1,19 +1,15 @@
+// src/three/CharacterController.ts
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 
-/**
- * handles character movement and any future logic (e.g., jumping, animations).
- */
 export class CharacterController {
   private characterModel: THREE.Group | null = null;
   private characterBody: CANNON.Body | null = null;
 
+  private lastAngle = 0;
+
   constructor() {}
 
-  /**
-   * sets the 3D model for the character.
-   * @param model A Three.js Group (e.g., from a GLTF file)
-   */
   public setCharacter(model: THREE.Group) {
     this.characterModel = model;
   }
@@ -29,8 +25,12 @@ export class CharacterController {
   public update(keys: Record<string, boolean>) {
     if (!this.characterBody) return;
 
-    const speed = 15; // SPEED VARIABLE
-    const velocity = new CANNON.Vec3(0, this.characterBody.velocity.y, 0);
+    const speed = 15; 
+    const velocity = new CANNON.Vec3(
+      0,
+      this.characterBody.velocity.y,
+      0
+    );
 
     if (keys['KeyW']) {
       velocity.z = -speed;
@@ -47,16 +47,47 @@ export class CharacterController {
     this.characterBody.velocity.copy(velocity);
   }
 
+  /**
+   * a small downward raycast to see if there's ground within 0.55 units
+   * (our sphere radius is 0.5). If so, we consider ourselves on the ground.
+   */
+  private isOnGround(): boolean {
+    if (!this.characterBody) return false;
+    const from = this.characterBody.position.clone();
+    const to = from.clone();
+    to.y -= 0.55; // a bit more than radius
+
+
+    const result = new CANNON.RaycastResult();
+    if (!this.characterBody.world) return false;
+    this.characterBody.world.raycastClosest(from, to, {}, result);
+
+    return result.hasHit;
+  }
+
+  
+  public jump() {
+    if (!this.characterBody) return;
+    if (this.isOnGround()) {
+      this.characterBody.velocity.y = 10; // big enough to get on top
+    }
+  }
+
 
   public computeRotationForVisual(): number {
-    if (!this.characterBody) return 0;
+    if (!this.characterBody) return this.lastAngle;
 
     const vx = this.characterBody.velocity.x;
     const vz = this.characterBody.velocity.z;
-    if (Math.abs(vx) < 0.001 && Math.abs(vz) < 0.001) {
-      return 0;
+    const speedSq = vx * vx + vz * vz;
+    if (speedSq < 0.001) {
+      return this.lastAngle;
     }
-    return Math.atan2(vx, vz) + Math.PI / 2;
+
+    // If the model faces +Z by default, angle = atan2(vx, vz) + π/2
+    const angle = Math.atan2(vx, vz) + Math.PI / 2;
+    this.lastAngle = angle;
+    return angle;
   }
 
   public getPosition(): THREE.Vector3 | null {
