@@ -52,10 +52,10 @@ export class CharacterController {
    * (our sphere radius is 0.5). If so, we consider ourselves on the ground.
    */
   private isOnGround(): boolean {
-    if (!this.characterBody) return false;
+    if (!this.characterBody || !this.characterBody.world) return false;
     const from = this.characterBody.position.clone();
     const to = from.clone();
-    to.y -= 0.55; // a bit more than radius
+    to.y -= 0.5; // a bit more than radius
 
 
     const result = new CANNON.RaycastResult();
@@ -69,7 +69,7 @@ export class CharacterController {
   public jump() {
     if (!this.characterBody) return;
     if (this.isOnGround()) {
-      this.characterBody.velocity.y = 10; // big enough to get on top
+      this.characterBody.velocity.y = 7; // height of jump
     }
   }
 
