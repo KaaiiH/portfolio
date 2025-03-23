@@ -17,115 +17,122 @@ export class ThreeScene {
   private camera: THREE.PerspectiveCamera;
   private renderer: THREE.WebGLRenderer;
   private animationId?: number;
-
-
-  private keys: Record<string, boolean> = {};
-
-
   private clock = new THREE.Clock();
-
-
   private characterController: CharacterController;
-
-
   private mixer: THREE.AnimationMixer | null = null;
   private actions: { [key: string]: THREE.AnimationAction | null } = {};
-
-
   private currentActionName: string | null = null;
-
+  private keys: Record<string, boolean> = {};
   private isSitting = false;
-  private isAnimating = false; 
+  private isAnimating = false;
   private isJumping = false;
   private isAttacking = false;
-
-
   private physicsWorld: PhysicsWorld | null = null;
-
   private testBlockMesh: THREE.Mesh | null = null;
-
-  private cameraTarget = new THREE.Vector3(0, 2, 5); // for smoothing
+  private cameraTarget = new THREE.Vector3(0, 2, 5);
   private shakeStart = 0;
   private shakeDuration = 0;
   private isShaking = false;
 
   constructor(private options: ThreeSceneOptions) {
+    // Initialize scene
     this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x87ceeb); // Sky blue background
+
+    // Initialize camera
     this.camera = new THREE.PerspectiveCamera(
       75,
       window.innerWidth / window.innerHeight,
       0.1,
       1000
     );
+    this.camera.position.set(0, 2, 5);
+    this.camera.lookAt(0, 0, 0);
 
+    // Initialize renderer
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.options.canvas,
       antialias: true,
+      alpha: true
     });
+    this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setClearColor(0x202020);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
+    // Initialize character controller
     this.characterController = new CharacterController();
 
-    this.init();
+    // Bind animation function
     this.animate = this.animate.bind(this);
+
+    // Initialize the scene
+    this.init();
   }
 
   private init() {
- 
+    // Initialize physics
     this.physicsWorld = new PhysicsWorld();
 
-
-    this.camera.position.set(0, 2, 5);
-
-
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    // Set up lights with better illumination
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.0); // Increased intensity
     this.scene.add(ambientLight);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0); // Increased intensity
     directionalLight.position.set(5, 10, 7);
+    directionalLight.castShadow = true;
+    directionalLight.shadow.mapSize.width = 2048; // Increased shadow resolution
+    directionalLight.shadow.mapSize.height = 2048;
+    directionalLight.shadow.camera.near = 0.5;
+    directionalLight.shadow.camera.far = 50;
+    directionalLight.shadow.camera.left = -10;
+    directionalLight.shadow.camera.right = 10;
+    directionalLight.shadow.camera.top = 10;
+    directionalLight.shadow.camera.bottom = -10;
     this.scene.add(directionalLight);
 
+    // Add a hemisphere light for better ambient illumination
+    const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
+    this.scene.add(hemisphereLight);
 
+    // Create floor with brighter material
     const planeGeometry = new THREE.PlaneGeometry(50, 50);
-    const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x555555 });
+    const planeMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x808080,  // Lighter grey
+      roughness: 0.8,
+      metalness: 0.2
+    });
     const floor = new THREE.Mesh(planeGeometry, planeMaterial);
     floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
     this.scene.add(floor);
 
-    //width, height, length
+    // Create test block with better material
     const blockGeometry = new THREE.BoxGeometry(2, 1, 2);
-    const blockMaterial = new THREE.MeshStandardMaterial({ color: 0x8f8f8f });
+    const blockMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xa0a0a0,  // Lighter grey
+      roughness: 0.7,
+      metalness: 0.3
+    });
     const testBlock = new THREE.Mesh(blockGeometry, blockMaterial);
     testBlock.position.set(0, 1, -5);
+    testBlock.castShadow = true;
+    testBlock.receiveShadow = true;
     this.scene.add(testBlock);
     this.testBlockMesh = testBlock;
 
     this.physicsWorld.createBlockBody(0, 1, -5);
 
-    const resumeCube = new THREE.Mesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshStandardMaterial({ color: 0x00ff00 })
-    );
-    resumeCube.position.set(2, 0.5, 0);
-    resumeCube.name = 'ResumeCube';
-    this.scene.add(resumeCube);
-
-    const githubCube = new THREE.Mesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshStandardMaterial({ color: 0x0000ff })
-    );
-    githubCube.position.set(-2, 0.5, 0);
-    githubCube.name = 'GithubCube';
-    this.scene.add(githubCube);
-
-
+    // Add event listeners
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     this.renderer.domElement.addEventListener('click', this.onClick);
 
-
+    // Load character
     this.loadCharacter();
+
+    // Start the animation loop
+    this.start();
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
@@ -155,27 +162,28 @@ export class ThreeScene {
         if (!model) return;
 
         this.scene.add(model);
-        // Start slightly above floor
-        model.position.set(0, 0, 0);
+        // Start slightly above floor to prevent falling through
+        model.position.set(0, 1, 0);
         model.scale.set(0.3, 0.3, 0.3);
 
         this.characterController.setCharacter(model);
 
-  
+        // Create physics body slightly above ground
         this.physicsWorld?.createCharacterBody(0, 1, 0);
         if (this.physicsWorld?.characterBody) {
           this.characterController.setCharacterBody(this.physicsWorld.characterBody);
         }
 
-
         this.mixer = new THREE.AnimationMixer(model);
 
+        // Log available animations for debugging
+        console.log('Available animations:', gltf.animations.map(a => a.name));
 
         gltf.animations.forEach((clip) => {
           const action = this.mixer!.clipAction(clip);
           this.actions[clip.name] = action;
+          console.log(`Loaded animation: ${clip.name}`);
         });
-
 
         const idleJumpClip = gltf.animations.find((c) => c.name === 'Idle Jump');
         if (idleJumpClip) {
@@ -191,7 +199,9 @@ export class ThreeScene {
           if (firstClip) this.playAnimation(firstClip);
         }
       },
-      undefined,
+      (progress) => {
+        console.log('Loading model:', (progress.loaded / progress.total * 100) + '%');
+      },
       (error) => console.error('Error loading character:', error)
     );
   }
@@ -211,54 +221,65 @@ export class ThreeScene {
 
     const dt = this.clock.getDelta();
 
-
-    if (!this.isSitting && !this.isAnimating && !this.isAttacking) {
-      this.characterController.update(this.keys);
-    }
-
-
+    // Update physics first
     if (this.physicsWorld) {
       this.physicsWorld.update(dt);
     }
 
+    // Update character controller
+    if (!this.isSitting && !this.isAnimating && !this.isAttacking) {
+      this.characterController.update(this.keys);
+    }
 
+    // Update character model position and rotation
     const characterModel = this.characterController.getCharacter();
     const characterBody = this.physicsWorld?.characterBody;
     if (characterModel && characterBody) {
-      characterModel.position.set(
+      // Smooth position update
+      const targetPosition = new THREE.Vector3(
         characterBody.position.x,
         characterBody.position.y,
         characterBody.position.z
       );
+      characterModel.position.lerp(targetPosition, 0.5);
 
-      // face direction from velocity
-      const angle = this.characterController.computeRotationForVisual();
-      characterModel.rotation.y = angle;
+      // Smooth rotation update
+      const targetRotation = this.characterController.computeRotationForVisual();
+      characterModel.rotation.y = THREE.MathUtils.lerp(
+        characterModel.rotation.y,
+        targetRotation,
+        0.1
+      );
     }
 
+    // Update block positions
+    if (this.testBlockMesh && this.physicsWorld?.blockBodies[0]) {
+      const blockBody = this.physicsWorld.blockBodies[0];
+      this.testBlockMesh.position.set(
+        blockBody.position.x,
+        blockBody.position.y,
+        blockBody.position.z
+      );
+    }
 
+    // Update animations
     if (!this.isJumping && !this.isAttacking && !this.isSitting && !this.isAnimating) {
       if (this.isMoving()) {
         if (this.currentActionName !== 'Walk' && this.actions['Walk']) {
-          this.playAnimation('Walk Start');
           this.playAnimation('Walk');
         }
       } else {
         if (this.currentActionName !== 'Idle' && this.actions['Idle']) {
-          this.playAnimation('Walk stop');
           this.playAnimation('Idle');
         }
       }
     }
 
-
     if (this.mixer) {
       this.mixer.update(dt);
     }
 
-
-    this.updateCamera(dt)
-
+    this.updateCamera(dt);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -425,7 +446,7 @@ export class ThreeScene {
       const desiredZ = pos.z + 5; 
       const desiredY = pos.y + 2; // keep camera 2 units above char
 
-      // Lerp the camera’s position to avoid snapping
+      // Lerp the camera's position to avoid snapping
       const lerpFactor = 7 * dt; // adjust for smoothness
       this.camera.position.x += (desiredX - this.camera.position.x) * lerpFactor;
       this.camera.position.y += (desiredY - this.camera.position.y) * lerpFactor;

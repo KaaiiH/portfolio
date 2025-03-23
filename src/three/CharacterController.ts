@@ -3,96 +3,131 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 
 export class CharacterController {
-  private characterModel: THREE.Group | null = null;
+  private character: THREE.Object3D | null = null;
   private characterBody: CANNON.Body | null = null;
-
-  private lastAngle = 0;
+  private moveSpeed = 15;
+  private jumpForce = 5;
+  private velocity = new THREE.Vector3();
+  private direction = new THREE.Vector3();
+  private canJump = true;
+  private isJumping = false;
+  private lastJumpTime = 0;
+  private jumpCooldown = 500;
+  private groundCheckDistance = 0.1;
+  private minHeight = 0.5;
+  private lastGroundedTime = 0;
+  private groundedThreshold = 100; // ms to remember grounded state
+  private groundCheckRay: CANNON.Ray | null = null;
 
   constructor() {}
 
-  public setCharacter(model: THREE.Group) {
-    this.characterModel = model;
+  setCharacter(character: THREE.Object3D) {
+    this.character = character;
   }
 
-  public setCharacterBody(body: CANNON.Body) {
+  getCharacter(): THREE.Object3D | null {
+    return this.character;
+  }
+
+  getPosition(): THREE.Vector3 | null {
+    if (!this.character) return null;
+    return this.character.position;
+  }
+
+  setCharacterBody(body: CANNON.Body) {
     this.characterBody = body;
   }
 
-  public getCharacter(): THREE.Group | null {
-    return this.characterModel;
-  }
+  update(keys: { [key: string]: boolean }) {
+    if (!this.character || !this.characterBody) return;
 
-  public update(keys: Record<string, boolean>) {
-    if (!this.characterBody) return;
+    // Reset horizontal velocity
+    this.characterBody.velocity.x = 0;
+    this.characterBody.velocity.z = 0;
 
-    const speed = 15; 
-    const velocity = new CANNON.Vec3(
-      0,
-      this.characterBody.velocity.y,
-      0
-    );
+    // Calculate movement direction
+    this.direction.set(0, 0, 0);
+    if (keys['KeyW']) this.direction.z = -1;
+    if (keys['KeyS']) this.direction.z = 1;
+    if (keys['KeyA']) this.direction.x = -1;
+    if (keys['KeyD']) this.direction.x = 1;
 
-    if (keys['KeyW']) {
-      velocity.z = -speed;
-    } else if (keys['KeyS']) {
-      velocity.z = speed;
+    // Normalize direction and apply movement
+    if (this.direction.lengthSq() > 0) {
+      this.direction.normalize();
+      // Always maintain full speed unless falling rapidly
+      const speedMultiplier = (!this.isOnGround() && this.characterBody.velocity.y < -5) ? 0.8 : 1.0;
+      this.characterBody.velocity.x = this.direction.x * this.moveSpeed * speedMultiplier;
+      this.characterBody.velocity.z = this.direction.z * this.moveSpeed * speedMultiplier;
     }
 
-    if (keys['KeyA']) {
-      velocity.x = -speed;
-    } else if (keys['KeyD']) {
-      velocity.x = speed;
+    // More aggressive ground correction
+    if (this.characterBody.position.y < this.minHeight + 0.1) {
+      this.characterBody.position.y = this.minHeight + 0.1;
+      if (this.characterBody.velocity.y < 0) {
+        this.characterBody.velocity.y = 0;
+      }
     }
 
-    this.characterBody.velocity.copy(velocity);
+    // Update character position from physics body
+    this.character.position.copy(this.characterBody.position as unknown as THREE.Vector3);
   }
 
-  /**
-   * a small downward raycast to see if there's ground within 0.55 units
-   * (our sphere radius is 0.5). If so, we consider ourselves on the ground.
-   */
-  private isOnGround(): boolean {
-    if (!this.characterBody || !this.characterBody.world) return false;
-    const from = this.characterBody.position.clone();
-    const to = from.clone();
-    to.y -= 0.5; // a bit more than radius
+  jump() {
+    if (!this.characterBody || !this.isOnGround() || this.isJumping) return;
 
+    // Check jump cooldown
+    const now = Date.now();
+    if (now - this.lastJumpTime < this.jumpCooldown) return;
+    this.lastJumpTime = now;
 
-    const result = new CANNON.RaycastResult();
-    if (!this.characterBody.world) return false;
-    this.characterBody.world.raycastClosest(from, to, {}, result);
+    // Apply upward impulse for jump with a bit more force
+    this.characterBody.velocity.y = this.jumpForce;
+    this.characterBody.position.y = this.minHeight + 0.2; // Bigger boost to ensure clean takeoff
+    this.isJumping = true;
 
-    return result.hasHit;
+    // Reset jump state when landing
+    const checkLanding = () => {
+      if (this.isOnGround()) {
+        this.isJumping = false;
+        if (this.characterBody) {
+          this.characterBody.position.y = this.minHeight + 0.1;
+          this.characterBody.velocity.y = 0;
+        }
+      } else {
+        requestAnimationFrame(checkLanding);
+      }
+    };
+    requestAnimationFrame(checkLanding);
   }
 
-  
-  public jump() {
-    if (!this.characterBody) return;
-    if (this.isOnGround()) {
-      this.characterBody.velocity.y = 7; // height of jump
+  isOnGround(): boolean {
+    if (!this.characterBody) return false;
+    
+    const height = this.characterBody.position.y;
+    const velocity = this.characterBody.velocity.y;
+    const now = Date.now();
+    
+    // More lenient ground check with time threshold
+    if (height <= this.minHeight + 0.2 && Math.abs(velocity) < 0.5) {
+      this.lastGroundedTime = now;
+      return true;
     }
+
+    // Consider still grounded for a short time after leaving ground
+    // This helps with jump responsiveness
+    return now - this.lastGroundedTime < this.groundedThreshold;
   }
 
+  computeRotationForVisual(): number {
+    if (!this.characterBody) return 0;
 
-  public computeRotationForVisual(): number {
-    if (!this.characterBody) return this.lastAngle;
-
-    const vx = this.characterBody.velocity.x;
-    const vz = this.characterBody.velocity.z;
-    const speedSq = vx * vx + vz * vz;
-    if (speedSq < 0.001) {
-      return this.lastAngle;
+    const velocity = this.characterBody.velocity;
+    if (Math.abs(velocity.x) < 0.1 && Math.abs(velocity.z) < 0.1) {
+      return this.character?.rotation.y || 0;
     }
 
-    // If the model faces +Z by default, angle = atan2(vx, vz) + π/2
-    const angle = Math.atan2(vx, vz) + Math.PI / 2;
-    this.lastAngle = angle;
-    return angle;
-  }
-
-  public getPosition(): THREE.Vector3 | null {
-    if (!this.characterBody) return null;
-    const p = this.characterBody.position;
-    return new THREE.Vector3(p.x, p.y, p.z);
+    // Add π/2 (90 degrees) for initial alignment plus π (180 degrees) for final orientation
+    return Math.atan2(-velocity.x, -velocity.z) + Math.PI * 1.5;
   }
 }

@@ -13,22 +13,25 @@ function App() {
     } else if (objectName === 'GithubCube') {
       window.open('https://github.com/KaaiiH', '_blank');
     }
-    //objects...
   }, []);
 
   useEffect(() => {
     if (!canvasRef.current) return;
 
-    const scene = new ThreeScene({
-      canvas: canvasRef.current,
-      onObjectInteract: handleObjectInteract,
-    });
-    scene.start();
-    setThreeScene(scene);
+    try {
+      const scene = new ThreeScene({
+        canvas: canvasRef.current,
+        onObjectInteract: handleObjectInteract,
+      });
+      scene.start();
+      setThreeScene(scene);
 
-    return () => {
-      scene.stop();
-    };
+      return () => {
+        scene.stop();
+      };
+    } catch (error) {
+      console.error('Error initializing ThreeScene:', error);
+    }
   }, [handleObjectInteract]);
 
   useEffect(() => {
@@ -44,10 +47,17 @@ function App() {
   }, [threeScene]);
 
   return (
-    <div style={{ position: 'relative' }}>
-      <canvas ref={canvasRef} />
+    <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}>
+      <canvas 
+        ref={canvasRef} 
+        style={{ 
+          width: '100%', 
+          height: '100%',
+          display: 'block'
+        }} 
+      />
       <div className="overlay">
-        <h2>Kai Hoenshell Porfolio</h2>
+        <h2>Kai Hoenshell Portfolio</h2>
         <p>Use W/A/S/D to move. Click on cubes to interact!</p>
         <p>Use Q to Sit/Stand</p>
         <p>Use Space to Jump</p>
